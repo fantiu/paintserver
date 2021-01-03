@@ -1,6 +1,8 @@
 package com.swmabby.paintServer.server;
 
+import com.alibaba.fastjson.JSON;
 import com.swmabby.paintServer.entity.Client;
+import com.swmabby.paintServer.entity.Message;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -13,6 +15,8 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
+import static org.apache.logging.log4j.message.MapMessage.MapFormat.JSON;
+
 @ServerEndpoint(value = "/socketServer/{userName}")
 @Component
 public class PaintServer {
@@ -24,25 +28,19 @@ public class PaintServer {
 	 */
 	private static CopyOnWriteArraySet<Client> socketServers = new CopyOnWriteArraySet<>();
 
-	/**
-	 *
-	 * websocket封装的session,信息推送，就是通过它来信息推送
-	 */
 	private Session session;
 
 	private final static String SYS_USERNAME = "First!@#Hello";
 
 	@OnOpen
-	public void open(Session session,@PathParam(value="userName")String userName){
+	public void open(Session session,@PathParam(value="userName")String userName) {
 
 		AtomicBoolean bExist = new AtomicBoolean(false);
-		socketServers.forEach(client ->{
+		socketServers.forEach(client -> {
 			if (userName.equals(client.getUserName())) {
 				bExist.compareAndSet(false, true);
-					client.setSession(session);
-
-					logger.info("更新客户端链接 :【{}】",client.getUserName());
-
+				client.setSession(session);
+				logger.info("更新客户端链接 :【{}】", client.getUserName());
 			}
 		});
 
@@ -58,11 +56,28 @@ public class PaintServer {
 	@OnMessage
 	public void onMessage(String message){
 
-		Client client = socketServers.stream().filter( cli -> cli.getSession() == session)
-				.collect(Collectors.toList()).get(0);
-		sendMessage(client.getUserName()+"<--"+message,SYS_USERNAME);
+		Message messageObject = null;
+		try {
+			messageObject = com.alibaba.fastjson.JSON.parseObject(message, Message.class);
+		} catch (Exception e) {
+			logger.error("message json parse error.{}", message);
+			return;
+		}
 
-		logger.info("客户端:【{}】发送信息:{}",client.getUserName(),message);
+		Client fromClient = socketServers.stream().filter( cli -> cli.getSession() == session)
+				.collect(Collectors.toList()).get(0);
+		// sendMessage(client.getUserName()+"<--"+message,SYS_USERNAME);
+
+		socketServers.stream().filter(cli -> cli.getUserName() != fromClient.getUserName())
+				.forEach(client -> {
+					try {
+						client.getSession().getBasicRemote().sendText(message);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				});
+
+		logger.info("客户端:【{}】发送信息:{}",fromClient.getUserName(),message);
 	}
 
 	@OnClose
